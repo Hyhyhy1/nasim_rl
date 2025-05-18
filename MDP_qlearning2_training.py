@@ -1,5 +1,5 @@
 import nasim
-from agents.qlearning_agent import Q_learning
+from agents.qlearning_agent2 import TabularQLearningAgent
 import matplotlib.pyplot as plt
 import time
 import logging
@@ -7,7 +7,7 @@ from datetime import datetime
 from statistics import fmean, stdev
 
 
-SCENARIO_NAME = "tiny"
+SCENARIO_NAME = "medium"
 
 def train_agent(n_episodes=1200):
     # Настраиваем логирование
@@ -29,7 +29,9 @@ def train_agent(n_episodes=1200):
     print(f"Starting training Q_learning agent on {n_episodes} episodes.")
     env = nasim.make_benchmark(SCENARIO_NAME, fully_obs=True, flat_actions=True, render_mode="human")
 
-    agent = Q_learning(observation_space_shape= env.observation_space.shape, action_space_n= env.action_space.n)
+    agent = TabularQLearningAgent(observation_space_shape = env.observation_space.shape,
+                                   action_space_n = env.action_space.n,
+                                   exploration_steps = n_episodes)
 
     scores = []
     start = time.time()
@@ -41,19 +43,17 @@ def train_agent(n_episodes=1200):
         score = 0
         while not (terminated or truncated):           
 
-            state = state.astype(int)
-            action = agent.choose_action(state)
+            action = agent.get_egreedy_action(state)
 
             new_state, reward, terminated, truncated, _ = env.step(action)
-            new_state = new_state.astype(int)
 
-            agent.learn(state, action, reward, new_state)
+            agent.learn(state, action, reward, new_state, terminated)
 
             state = new_state
             
             score += reward
-        
-        agent.update_epsilon(i)
+
+        agent.steps_done +=1
         scores.append(score)
 
         log_message = 'Episode {} in {:.2f} min. Expected total time for {} episodes: {:.0f} min. [{:.2f}]'.format(
@@ -84,14 +84,14 @@ def evaluate_agent(agent, n_episodes):
         steps = 0
         while not (terminated or truncated):
 
-                action = agent.choose_action(state)
+                action = agent.get_egreedy_action(state)
                 new_state, reward, terminated, truncated, _ = env.step(action)
 
                 state = new_state
 
                 steps += 1
                 score += reward
-    
+
         scores.append(score)
         trajectory_steps.append(steps)
 

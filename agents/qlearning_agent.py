@@ -3,7 +3,7 @@ import numpy as np
 class Q_learning():
 
     def __init__(self, observation_space_shape, action_space_n, gamma=0.99, alpha=0.1):
-        self.state_n = 576
+        self.state_n = 24576
         self.action_n = action_space_n
         self.q_function = np.zeros((self.state_n, self.action_n))
         self.epsilon = 0.1
