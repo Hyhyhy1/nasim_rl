@@ -1,4 +1,5 @@
 import nasim
+import pickle
 from agents.qlearning_agent2 import TabularQLearningAgent
 import matplotlib.pyplot as plt
 import time
@@ -7,12 +8,12 @@ from datetime import datetime
 from statistics import fmean, stdev
 
 
-SCENARIO_NAME = "medium"
+SCENARIO_NAME = "tiny-small"
 
 def train_agent(n_episodes=1200):
     # Настраиваем логирование
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_filename = f'logs/training_log_{timestamp}.txt'
+    log_filename = f'logs/training_log_{SCENARIO_NAME}_Q-learning_{timestamp}.txt'
     
     # Создаем форматтер для логов
     formatter = logging.Formatter('%(asctime)s - %(message)s')
@@ -123,6 +124,16 @@ def make_plot(training_scores, is_eval=False):
 def main():
     agent, training_scores = train_agent()
     make_plot(training_scores)
+
+    with open(f"./weights/{SCENARIO_NAME}_Q-learning.pkl", "wb") as f:
+        pickle.dump(agent.qfunc.q_func, f)
+
+    loaded_data = None
+    with open(f"./weights/{SCENARIO_NAME}_Q-learning.pkl", "rb") as f:
+        loaded_data = pickle.load(f)
+    print(loaded_data)
+
+    
 
     evaluating_scores, trajectory_steps = evaluate_agent(agent, 200)
 

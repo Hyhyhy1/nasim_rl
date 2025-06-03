@@ -1,76 +1,150 @@
 import numpy as np
 
+ACTION_NAMES = {"SUBNET_SCAN": "subnet_scan", "OS_SCAN": "os_scan", "SERVICE_SCAN": "service_scan", "PROCESS_SCAN": "process_scan",
+            "EXPLOIT_SSH": "e_ssh",  "EXPLOIT_FTP": "e_ftp", "EXPLOIT_SAMBA": "e_samba", "EXPLOIT_SMTP": "e_smtp", "EXPLOIT_HTTP": "e_http", 
+            "PRIVI_ESCA_TOMCAT": "pe_tomcat", "PRIVI_ESCA_DACLSVC": "pe_daclsvc", "PRIVI_ESCA_CRON": "pe_schtask"}
 
 class Heuristic():
 
-    def __init__(self, observation_space_shape, action_space_n, host_vector_count):
+    def __init__(self, observation_space_shape, action_space, action_space_n, subnet_count, host_count, max_machines_in_subnet):
         self.observation_shape = observation_space_shape[0]
+
+        self.max_machines_in_subnet = max_machines_in_subnet
+        self.subnet_count = subnet_count
+        self.host_vector_count = host_count
+        self.host_vec_length = int(self.observation_shape / (self.host_vector_count+1))
+
+        self.action_space = action_space
         self.action_n = action_space_n
-        self.host_vector_count = host_vector_count
-        self.host_vec_length = int(self.observation_shape / self.host_vector_count)
+        
         self.prev_action = None
 
+        self.used_actions = set()
 
-    def get_action_id(self, action_type, host_subnet):
-        """Конвертирует тип действия и подсеть в ID действия."""
-        base_id = {
-            1: 0,   # Машина (1,0) → базовый 0
-            2: 6,   # Машина (2,0) → базовый 6
-            3: 12   # Машина (3,0) → базовый 12
-        }[host_subnet]
+        self.discovered_count = 0
+
+    def select_action(self, action_name, action_target):
         
-        action_map = {
-            "service_scan": 0,
-            "os_scan": 1,
-            "subnet_scan": 2,
-            "process_scan": 3,
-            "exploit": 4,
-            "pe": 5
-        }
-        return base_id + action_map[action_type]
+        for i in range(0, self.action_space.n):
+            action = self.action_space.get_action(i)
+            if action.name == action_name and action.target == action_target:
+                return i
+    
+
+    def get_host_data(self, host_vec):
+        host_data = {}
+        index = self.subnet_count + 1 + self.max_machines_in_subnet
+
+        host_data["subnet"] = int(np.argmax(host_vec[0:self.subnet_count+1]))
+        host_data["host"] = int(np.argmax(host_vec[self.subnet_count+1:index]))
+
+        host_data["compromised"] = bool(host_vec[index])
+        host_data["reachable"] = bool(host_vec[index+1])
+        host_data["discovered"] = bool(host_vec[index+2])
+        host_data["value"] = int(host_vec[index+3])
+        host_data["discovery_value"] = int(host_vec[index+4])
+        host_data["access"] = int(host_vec[index+5])
+
+        if host_vec[index+6] == 1:
+            host_data["os"] = "linux"
+        elif host_vec[index+7] == 1:
+            host_data["os"] = "windows"
+         
+        host_data["services"] = []
+        if host_vec[index+8] == 1:
+            host_data["services"].append("ssh")
+        
+        if host_vec[index+9] == 1:
+            host_data["services"].append("ftp")
+
+        if host_vec[index+10] == 1:
+            host_data["services"].append("http")
+
+        host_data["processes"] = []
+        if host_vec[index+11] == 1:
+            host_data["processes"].append("tomcat")
+
+        if host_vec[index+12] == 1:
+            host_data["processes"].append("daclsvc")
+
+        return host_data
 
 
 
-    def choose_action(self, state, info):
-        state_data = self.parse_state(state)        
-        temp = 0
-        hosts = [h for h in state_data if h["subnet"] in {1,2,3}]
+    def choose_action(self, state):
+        hosts, last_action_data = self.parse_state(state)
 
-        action =  self.get_action_id("subnet_scan", hosts[0]["subnet"])
+        discovered_count = sum(host["discovered"] for host in hosts)
+
+        if self.prev_action is not None:
+            if last_action_data == 1 or last_action_data == 2 or self.action_space.get_action(self.prev_action).name == "subnet_scan":
+                self.used_actions.add(self.prev_action)
+            else:
+                if discovered_count > self.discovered_count:
+                    self.used_actions.clear()
+        
+        self.discovered_count = discovered_count
+        
+        action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
         
         # 1. Проверить PE для всех машин
         for host in sorted(hosts, key=lambda h: -h["value"]):
-            if host["access"] == 1 and "tomcat" in host["processes"]:
-                action = self.get_action_id("pe", host["subnet"])
-                if action == self.prev_action:
-                    continue
-                else:
-                    self.prev_action = action
-                    return action
-        
+
+            if host["access"] == 1 and host["value"] > 0:
+
+                if "tomcat" in host["processes"] and host["os"] == "linux":
+                    action = self.select_action(ACTION_NAMES["PRIVI_ESCA_TOMCAT"], (host["subnet"], host["host"]))
+                    if action not in self.used_actions:
+                        self.prev_action = action
+                        return action
+                    action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
+
+                if "daclsvc" in host["processes"] and host["os"] == "windows":
+                    action = self.select_action(ACTION_NAMES["PRIVI_ESCA_DACLSVC"], (host["subnet"], host["host"]))
+                    if action not in self.used_actions:
+                        self.prev_action = action
+                        return action
+                    action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
+
+
         # 2. Exploit доступных машин
         for host in sorted(hosts, key=lambda h: -h["value"]):
-            if host["reachable"] and host["discovered"] and not host["compromised"] and "ssh" in host["services"]:
-                action = self.get_action_id("exploit", host["subnet"])
-                if action == self.prev_action:
-                    continue
-                else:
-                    self.prev_action = action
-                    return action
+            if host["reachable"] and host["discovered"] and not host["compromised"]:
+
+                if "ssh" in host["services"] and host["os"] == "linux":
+                    action = self.select_action(ACTION_NAMES["EXPLOIT_SSH"], (host["subnet"], host["host"]))
+                    if action not in self.used_actions:
+                        self.prev_action = action
+                        return action
+                    action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
+
+                if "http" in host["services"]:
+                    action = self.select_action(ACTION_NAMES["EXPLOIT_HTTP"], (host["subnet"], host["host"]))
+                    if action not in self.used_actions:
+                        self.prev_action = action
+                        return action
+                    action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
+
+                if "ftp" in host["services"] and host["os"] == "windows":
+                    action = self.select_action(ACTION_NAMES["EXPLOIT_FTP"], (host["subnet"], host["host"]))
+                    if action not in self.used_actions:
+                        self.prev_action = action
+                        return action
+                    action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
         
         
         # 3. Subnet Scan из скомпрометированных
         compromised_hosts = [h for h in hosts if h["compromised"]]
         for host in compromised_hosts:
             if not all(h["discovered"] for h in hosts):
-                action = self.get_action_id("subnet_scan", host["subnet"])
-                if action == self.prev_action:
-                    continue
-                else:
+                action = self.select_action(ACTION_NAMES["SUBNET_SCAN"], (host["subnet"], host["host"]))
+                if action not in self.used_actions:
                     self.prev_action = action
                     return action
+                else:
+                    continue
         
-        return action
+        return self.select_action(ACTION_NAMES["SUBNET_SCAN"], (1,0))
 
    
     def parse_state(self, state):
@@ -82,37 +156,11 @@ class Heuristic():
             start_idx = subnet_id * self.host_vec_length
             host_vec = state[start_idx : start_idx + self.host_vec_length]
 
-            host_data = {
-                # One-hot подсети
-                "subnet": np.argmax(host_vec[0:4]),  
-                
-                # One-hot хоста
-                "host": 0 if host_vec[4] == 1 else -1,  
-                
-                # Основные флаги
-                "compromised": bool(host_vec[5]),
-                "reachable": bool(host_vec[6]),
-                "discovered": bool(host_vec[7]),
-                
-                # Ценность
-                "value": int(host_vec[8]),  
-                
-                # Новизна обнаружения
-                "discovery_value": bool(host_vec[9]),  
-                
-                # Уровень доступа
-                "access": int(host_vec[10]),  
-                
-                # One-hot OS
-                "os": "linux" if host_vec[11] == 1 else "unknown",  
-                
-                # Сервисы
-                "services": ["ssh"] if host_vec[12] == 1 else [],  
-                
-                # Процессы
-                "processes": ["tomcat"] if host_vec[13] == 1 else []  
-            }
-
+            host_data = self.get_host_data(host_vec)
             data.append(host_data)
+        
+        temp = self.host_vector_count * self.host_vec_length
+        last_action_data_temp = state[temp : temp + self.host_vec_length]
+        last_action_data = int(np.argmax(last_action_data_temp[0:4]))
 
-        return data
+        return data, last_action_data

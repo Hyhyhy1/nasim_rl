@@ -1,6 +1,6 @@
 import nasim
 #from agents.ddqn_agent import DoubleQAgent
-from agents.test_ddqn_agent import DoubleQAgent
+from agents.modified_ddqn_agent import DoubleQAgent
 import matplotlib.pyplot as plt
 import time
 import logging

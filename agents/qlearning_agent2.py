@@ -3,17 +3,6 @@ from pprint import pprint
 
 import numpy as np
 
-import nasim
-
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except ImportError as e:
-    from gymnasium import error
-    raise error.DependencyNotInstalled(
-        f"{e}. (HINT: you can install tabular_q_learning_agent dependencies "
-        "by running 'pip install nasim[dqn]'.)"
-    )
-
 
 class ReplayMemory:
     """Experience Replay for Tabular Q-Learning agent """
